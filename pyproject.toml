@@ -24,7 +24,7 @@ packages = [
 sources = [ "src" ]
 
 [project]
-name = "py-network"
+name = "py-network-pynet"
 requires-python = ">=3.8"
 readme = {file="README.md", content-type = "text/markdown"}
 dynamic = ["version"]
