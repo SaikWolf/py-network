@@ -124,7 +124,7 @@ class ClientNetworking(object):
             if not self.mode:
                 if self._cpipe.poll(0.001):
                     incoming = self._cpipe.recv()
-                    # print("incoming",incoming)
+                    # print("INCOMING:",incoming)
                     if not isinstance(incoming,dict):
                         continue
                     if 'ping' in incoming:
@@ -137,7 +137,7 @@ class ClientNetworking(object):
                         if 'send' in incoming:
                             msg = incoming['send']
                             priority = 0
-                        self.reply(sid,msg,priority)
+                        self._reply(sid,msg,priority)                        
 
             if self._ping:
                 for k,d_q in self.reply_map.items():
@@ -147,6 +147,10 @@ class ClientNetworking(object):
                         d_q.remove(PING)
                     d_q.insert(0,PING)
                     self.state_map[k] = 16
+                    if not self.mode:
+                        self._cpipe.send({"state_change":16,"sid":k})
+                        with self._mcond:
+                            self._mcond.notify()
                 self._ping = False
             
             socks = dict(zmq_poll([(connection,zmq.POLLIN | zmq.POLLOUT)], 10))
@@ -187,6 +191,10 @@ class ClientNetworking(object):
                             print("____pinged____")
                         elif len(msg) == 1 and msg[0]==PONG:
                             self.state_map[sid] = 1
+                            if not self.mode:
+                                self._cpipe.send({"state_change":1,"sid":sid})
+                                with self._mcond:
+                                    self._mcond.notify()
                             print("____ponged____")
                         else:
                             if not self.mode:
@@ -194,7 +202,7 @@ class ClientNetworking(object):
                                 with self._mcond:
                                     self._mcond.notify()
                             elif callable(self._task_callback):
-                                self._task_callback(sid,msg)
+                                self._task_callback((sid,msg))
                             else:
                                 self.task_map[sid].append(msg)
                     else:
@@ -228,14 +236,25 @@ class ClientNetworking(object):
             with self._mcond:
                 if self._mcond.wait(0.1):
                     payload = self._mpipe.recv()
+                    # print(payload)
                     try:
-                        sid,msg = payload
+                        if "state_change" in payload:
+                            self.state_map[payload['sid']] = payload['state_change']
+                            continue
+                        if 'new_sid' in payload:
+                            self._add_new_sid(payload['new_sid'])
+                            continue
+                        if 'task' in payload:
+                            sid = payload['sid']
+                            msg = payload['task']
+                            if callable(self._task_callback):
+                                self._task_callback((sid,msg))
+                            else:
+                                self.task_map[sid].append(msg)
                     except:
-                        pass
-                    if callable(self._task_callback):
-                        self._task_callback(sid,msg)
-                    else:
-                        self.task_map[sid].append(msg)
+                        import traceback
+                        traceback.print_exc()
+                        print("failed:",payload)
 
     def wait(self):
         if self.listener is not None:
@@ -247,18 +266,30 @@ class ClientNetworking(object):
             self._mpipe.send({'ping':True})
         else:
             self._ping = True
+        time.sleep(0.1)
 
     def send(self,msg:Union[str,bytes]):
         for ep in list(self.state_map):
             self.reply_map[ep].append(msg)
             if self._mpipe is not None:
-                self._mpipe.send({"send":msg,"sid":ep})
+                to_pipe = {"send":msg,"sid":ep}
+                # print("PIPING:",to_pipe)
+                self._mpipe.send(to_pipe)
 
     def reply(self,sid,msg,priority=0):
+        if self.mode:
+            self._reply(sid,msg,priority)
+        if sid not in self.reply_map:
+            return
+        else:
+            to_pipe = {"reply":msg,"sid":sid,"priority":priority}
+            self._mpipe.send(to_pipe)
+
+
+    def _reply(self,sid,msg,priority=0):
         if sid not in self.reply_map:
             return
         if priority == 1:
             self.reply_map[sid].insert(0,msg)
         else:
             self.reply_map[sid].append(msg)
-
