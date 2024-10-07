@@ -39,7 +39,7 @@ dependencies = [
     "numpy<2.0",
     "pyyaml",
     "pytest",
-    "zmq>23.0",
+    "pyzmq>23.0",
     "pytest-cov",
     "crccheck",
     "sphinx",
