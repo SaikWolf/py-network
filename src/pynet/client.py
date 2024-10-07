@@ -179,7 +179,8 @@ class ClientNetworking(object):
                         if sid not in self.state_map:
                             if not self.mode:
                                 self._cpipe.send({'new_sid':sid})
-                                self._mcond.notify()
+                                with self._mcond:
+                                    self._mcond.notify()
                             self._add_new_sid(sid)
                         if len(msg) == 1 and msg[0]==PING:
                             self.reply(sid,PONG,1)
@@ -190,7 +191,8 @@ class ClientNetworking(object):
                         else:
                             if not self.mode:
                                 self._cpipe.send({'task':msg,'sid':sid})
-                                self._mcond.notify()
+                                with self._mcond:
+                                    self._mcond.notify()
                             elif callable(self._task_callback):
                                 self._task_callback(sid,msg)
                             else:
