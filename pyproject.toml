@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+path = "src/pygen/__init__.py"
+
+[tool.hatch.build]
+directory = "build"
+
+# [tool.hatch.build.target.sdist.force-include]
+# "scripts/dataset_gen.py" = "src/datagen/_scripts/dataset_gen.py"
+
+# [tool.hatch.build.target.wheel.force-include]
+# "scripts/dataset_gen.py" = "src/datagen/_scripts/dataset_gen.py"
+
+[tool.hatch.build.targets.sdist]
+ignore-vcs = true
+include = [
+    "src/*"
+]
+exclude = [
+    "__pycache__"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/pynet"
+]
+sources = [ "src" ]
+
+[project]
+name = "pynet"
+requires-python = ">=3.8"
+readme = {file="README.md", content-type = "text/markdown"}
+dynamic = ["version"]
+dependencies = [
+    "numpy<2.0",
+    "pyyaml",
+    "pytest",
+    "zmq>23.0",
+    "pytest-cov",
+    "crccheck",
+    "sphinx",
+    "sphinx-rtd-theme"
+]
+authors = [
+    {name = "Bill Clark"}
+]
+maintainers = [
+    {name = "Bill Clark"}
+]
+# [project.optional-dependencies]
+# "rl_packages" = [
+#     "stable_baselines3",
+#     "stable_baselines3[extra]"
+# ]
+# [project.scripts]
+# dataset_generator="datagen._scripts.dataset_gen:main"
+
+# [tool.hatch.envs.enhanced]
+# features = [ "rl_packages" ]
