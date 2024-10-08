@@ -2,6 +2,7 @@
 from .system_header import *
 import struct
 
+import socket
 
 class ConnectionRole(IntFlag):
     OFF_=0
@@ -12,6 +13,7 @@ class ConnectionRole(IntFlag):
     UNIX=16
     MCST=32
     BIND=64
+    REUSE=128
 
 class MessageWrapper(object):
     def __init__(self):
@@ -148,6 +150,8 @@ class BetterConnection(object):
 
 
     def connect(self):
+        if self.role & ConnectionRole.REUSE:
+            return self._connect_socket()
         self._ctx = self._ctx if self._ctx else zmq.Context()
         self.protocol = None
         if self.role & (ConnectionRole.RECV | ConnectionRole.SEND):
@@ -179,6 +183,8 @@ class BetterConnection(object):
         if self.role & ConnectionRole.BIND:
             if self._sock_type == zmq.ROUTER:
                 self._sock.identity = endpoint.encode()
+            if self.role & ConnectionRole.MCST:
+                pass
             self._conn = self._sock.bind(endpoint)
             self.endpoint = self._sock.LAST_ENDPOINT
             # print("Socket bind ",end='')
@@ -198,6 +204,43 @@ class BetterConnection(object):
         if self._sock_type == zmq.SUB:
             self._sock.setsockopt_string(zmq.SUBSCRIBE,'')
         return self
+
+    def _connect_socket(self):
+        group = self.net[0][0]
+        port = self.net[1][0]
+        ttl = 4
+        self._sock = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_DGRAM,
+            socket.IPPROTO_UDP
+        )
+        self._sock.setsockopt(
+            socket.IPPROTO_IP,
+            socket.IP_MULTICAST_TTL,
+            ttl
+        )
+        self._sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEADDR,
+            1
+        )
+        self._sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEPORT,
+            1
+        )
+        self._sock.setblocking(0)
+
+        self._sock.bind((group,port))
+
+        grp_req = struct.pack("4sl",socket.inet_aton(group),socket.INADDR_ANY)
+        self._sock.setsockopt(
+            socket.IPPROTO_IP,
+            socket.IP_ADD_MEMBERSHIP,
+            grp_req
+        )
+        self.sendpoint = (group,port)
+        self._sock_type = zmq.DGRAM
 
     def get_socket(self):
         return self._sock
@@ -330,6 +373,7 @@ class BetterConnection(object):
                 dests = True
         # print(msg,dest,dests)
         if not dests:
+            print(self._sock_type)
             raise RuntimeError("Destinations cannot be derived. ")
         # print(msg,dest,dests)
         if dests == True:
@@ -351,18 +395,28 @@ class BetterConnection(object):
         # print(msg,dest,dests)
         if isinstance(self._sock,zmq.Socket):
             if self._sock_type in [zmq.DGRAM,zmq.STREAM]:
-                print("Send point A",[f'{self.sendpoint}'.encode()]+send_msg)
-                self._sock.send_multipart([f'{self.sendpoint}'.encode()]+send_msg)
+                if send_msg and send_msg[0] == self.sendpoint:
+                    # print("Send point A",send_msg)
+                    self._sock.send_multipart(send_msg)
+                else:
+                    # print("Send point A",[f'{self.sendpoint.decode()}'.encode()]+send_msg)
+                    self._sock.send_multipart([f'{self.sendpoint.decode()}'.encode()]+send_msg)
             else:
                 # print(send_msg)
                 if len(send_msg) > 1:
-                    print("Send point B",send_msg)
+                    # print("Send point B",send_msg)
                     self._sock.send_multipart(send_msg)
                 else:
-                    print("Send point C",send_msg[0])
+                    # print("Send point C",send_msg[0])
                     self._sock.send(send_msg[0])
+        else:
+            # print("Send point D",len(send_msg[1]))
+            self._sock.sendto(send_msg[1],self.sendpoint)
 
     def __send_multi_msg(self,msg_list):
+        if not isinstance(self._sock,zmq.Socket):
+            print(msg_list)
+            raise ValueError("Got here without being zmq")
         ### assumed zmq for this
         for msg in msg_list:
             if len(msg) > 1:
@@ -378,32 +432,40 @@ class BetterConnection(object):
         handler = MessageWrapper()
         sender = None
         if self._sock in socks or self._sock.fileno() in socks:
-            payload = self._sock.recv_multipart()
-            # print("raw recv:",payload)
-            if self.role & ConnectionRole.MCST:
-                payload = payload[1:]
-            if self._sock.socket_type == zmq.ROUTER:
-                sender = payload[0]
-                payload = payload[1:]
-            if not _raw:
-                for chunk in payload:
-                    handler.parse(chunk)
-                if not handler.ready:
-                    print("....")
-                payload = handler.get()
-                payload = [payload] if not isinstance(payload,list) else payload
-            payload = ([sender] if sender is not None else []) + payload
-            payload = payload if len(payload) > 1 else payload[0]
+            if isinstance(self._sock,zmq.Socket):
+                payload = self._sock.recv_multipart()
+                # print("raw recv:",payload)
+                if self.role & ConnectionRole.MCST:
+                    payload = payload[1:]
+                if self._sock.socket_type == zmq.ROUTER:
+                    sender = payload[0]
+                    payload = payload[1:]
+                if not _raw:
+                    for chunk in payload:
+                        handler.parse(chunk)
+                    if not handler.ready:
+                        print("....")
+                    payload = handler.get()
+                    payload = [payload] if not isinstance(payload,list) else payload
+                payload = ([sender] if sender is not None else []) + payload
+                payload = payload if len(payload) > 1 else payload[0]
+            elif isinstance(self._sock,socket.socket):
+                payload = self._sock.recv(9000)
             return payload
         return None
 
     def recv_all(self,timeout:int=10,tag:str=None,count:int=0,_raw=True):
         payloads = []
-        payload = self.recv(timeout=timeout,tag=tag,_raw=_raw)
-        while payload is not None:
-            payloads.append(payload)
+        if isinstance(self._sock, zmq.Socket):
             payload = self.recv(timeout=timeout,tag=tag,_raw=_raw)
-
+            while payload is not None:
+                payloads.append(payload)
+                payload = self.recv(timeout=timeout,tag=tag,_raw=_raw)
+        elif isinstance(self._sock, socket.socket):
+            payload = self.recv(timeout=timeout,tag=tag,_raw=_raw)
+            while payload is not None:
+                payloads.append(payload)
+                payload = self.recv(timeout=0,tag=tag,_raw=_raw)
         return payloads
 
     def close(self):
