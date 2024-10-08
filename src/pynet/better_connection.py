@@ -351,8 +351,8 @@ class BetterConnection(object):
         # print(msg,dest,dests)
         if isinstance(self._sock,zmq.Socket):
             if self._sock_type in [zmq.DGRAM,zmq.STREAM]:
-                print("Send point A",[f'{addr}:{port}'.encode()]+send_msg)
-                self._sock.send_multipart([f'{addr}:{port}'.encode()]+send_msg)
+                print("Send point A",[f'{self.sendpoint}'.encode()]+send_msg)
+                self._sock.send_multipart([f'{self.sendpoint}'.encode()]+send_msg)
             else:
                 # print(send_msg)
                 if len(send_msg) > 1:
