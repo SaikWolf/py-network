@@ -15,6 +15,36 @@ class ConnectionRole(IntFlag):
     BIND=64
     REUSE=128
 
+    @staticmethod
+    def make(keys):
+        if isinstance(keys,ConnectionRole):
+            return keys
+        value = ConnectionRole.OFF_
+        for k in keys:
+            try:
+                if k[0].lower() == 's':
+                    value |= ConnectionRole.SEND
+                elif k[0].lower() == 'r':
+                    if k[2].lower() == 'c':
+                        value |= ConnectionRole.RECV
+                    elif k[2].lower() == 'u':
+                        value |= ConnectionRole.REUSE
+                elif k[0].lower() == 'u':
+                    if k[1].lower() == 'd':
+                        value |= ConnectionRole.UDP_
+                    elif k[1].lower() == 'n':
+                        value |= ConnectionRole.UNIX
+                elif k[0].lower() == 't':
+                    value |= ConnectionRole.TCP_
+                elif k[0].lower() == 'b':
+                    value |= ConnectionRole.BIND
+                elif k[0].lower() == 'm':
+                    value |= ConnectionRole.MCST
+            except:
+                pass
+        return value
+
+
 class MessageWrapper(object):
     def __init__(self):
         self.buff = None
@@ -80,8 +110,6 @@ class MessageWrapper(object):
         self.active = None
         return buff if len(buff) > 1 else buff[0]
 
-
-
 def zmq_poll(sockets:List[Tuple[Any,int]],timeout:int=None):
     socks = {}
     for sock,flag in sockets:
@@ -132,6 +160,7 @@ class BetterConnection(object):
             self.net = ([addr],[port])
         self.sendpoint = None
         self.endpoint = None
+        self._n0 = 0
 
     def __str__(self):
         state = ((int(self._conn is not None) << 0)
@@ -142,12 +171,11 @@ class BetterConnection(object):
             state = "Running"
         elif state in [2,3]:
             state = "Closed"
-        out = f"<BetterConnection: {state}, fileno: {self.fileno()}>"
+        out = f"<BetterConnection: {state}, role: {str(self.role)}, fileno: {self.fileno()}>"
         return out
 
     def __repr__(self):
         return str(self)
-
 
     def connect(self):
         if self.role & ConnectionRole.REUSE:
@@ -280,6 +308,7 @@ class BetterConnection(object):
                 msg = [msg]
 
 
+        # print(dest,tag,msg) # not it
         if self._sock_type in [zmq.PUB]:
             dests = [self.endpoint]
 
@@ -331,11 +360,15 @@ class BetterConnection(object):
                     raise ValueError("Couldn't understand 'dest'")
                 dests = [f"{self.protocol}://{a if isinstance(a,str) else a.decode()}:{p if isinstance(p,str) else p.decode()}".encode() for a,p in zip(addr,port)]
             elif self.sendpoint is not None:
-                dests = [x for x in self.sendpoint] if isinstance(self.sendpoint,list) else [self.sendpoint]
+                dests = ([x.encode() if isinstance(x,str) else x for x in self.sendpoint]
+                         if isinstance(self.sendpoint,list) else 
+                         [self.sendpoint.encode() if isinstance(self.sendpoint,str) else self.sendpoint])
             # else:
             #     raise RuntimeError("Destination address could not be inferred")
             # maybe still further down in the payload?
         # print(msg,dest,dests)
+        
+        # print(dest,tag,msg) # not it
         if isinstance(msg,str):
             payload = [msg.encode()]
         elif isinstance(msg,bytes):
@@ -372,6 +405,7 @@ class BetterConnection(object):
             if multimsg:
                 dests = True
         # print(msg,dest,dests)
+        # print(dest,tag,msg) # not it
         if not dests:
             print(self._sock_type)
             raise RuntimeError("Destinations cannot be derived. ")
@@ -382,17 +416,28 @@ class BetterConnection(object):
                 for x in dest:
                     send_msgs.append([x] + ([b''] if self._sock_type in [zmq.ROUTER] else []) + msg)
         elif dests:
-            send_msgs = [[x] + ([b''] if self._sock_type in [zmq.ROUTER] else []) + msg for x in dests]
+            delim = [b''] if self._sock_type == zmq.ROUTER else (
+                [] if self._sock_type != zmq.PUB else (
+                    [(tag.encode() if isinstance(tag,str) else tag)] if tag else [b'']
+                )
+            )
+            send_msgs = [[x] + delim + msg for x in dests]
 
+        if self._n0:
+            print(self.role,dest,dests,tag,send_msgs)
+            self._n0 -= 1
+
+        # print(dest,tag,send_msgs)
         if len(send_msgs) > 1:
-            self.__send_multi_msg(send_msgs)
-            return
+            return self.__send_multi_msg(send_msgs)
+
         elif send_msgs:
             send_msg = send_msgs[0]
         else:
             return
         # print("send_msg:",send_msg)
         # print(msg,dest,dests)
+
         if isinstance(self._sock,zmq.Socket):
             if self._sock_type in [zmq.DGRAM,zmq.STREAM]:
                 if send_msg and send_msg[0] == self.sendpoint:
@@ -404,23 +449,29 @@ class BetterConnection(object):
             else:
                 # print(send_msg)
                 if len(send_msg) > 1:
-                    # print("Send point B",send_msg)
+                    # # print("Send point B",len(send_msg),[len(x) for x in send_msg]) #### pub should always be here, same with router
+                    # for x in send_msg:
+                    #     if len(x) < 100:
+                    #         print(x, end=' | ')
+                    # print()
                     self._sock.send_multipart(send_msg)
                 else:
                     # print("Send point C",send_msg[0])
                     self._sock.send(send_msg[0])
         else:
-            # print("Send point D",len(send_msg[1]))
+            # print("Send point D++",len(send_msg),len(send_msg[1]))
             self._sock.sendto(send_msg[1],self.sendpoint)
 
     def __send_multi_msg(self,msg_list):
         if not isinstance(self._sock,zmq.Socket):
-            print(msg_list)
+            print("Send point G",len(msg_list))
             raise ValueError("Got here without being zmq")
         ### assumed zmq for this
+        # print(msg_list)
         for msg in msg_list:
             if len(msg) > 1:
-                print("Send point D",len(msg))
+                print("Send point D--",len(msg))
+                print(msg)
                 self._sock.send_multipart(msg)
             else:
                 print("Send point F",len(msg))
