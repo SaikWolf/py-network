@@ -139,15 +139,16 @@ class ServerNetworking(object):
                 self._ping = False
             
             socks = dict(zmq_poll([(connection,zmq.POLLIN | zmq.POLLOUT)], 10))
-            ticks += 1
+            ticks += (1 if len(self.state_map) else 0)
             if time.time() - last > debug_timeout:
                 # print(socks,ticks)
                 if ticks > 200000:
                     print("CONNECTION LOST")
                     if not self.mode:
-                        self._cpipe.send({"state_change":0,"sid":k})
-                        with self._mcond:
-                            self._mcond.notify()
+                        for k in self.state_map.keys():
+                            self._cpipe.send({"state_change":0,"sid":k})
+                            with self._mcond:
+                                self._mcond.notify()
 
                 self._ping = True
                 last = time.time()
