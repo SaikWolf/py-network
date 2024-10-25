@@ -11,11 +11,11 @@ class BP_STOP(Exception):
 class BetterProcess(mp.Process):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
-        self._external_stop_ = threading.Event()
+        self._external_stop_ = mp.Event()
         self._external_stop_.clear()
-        self._ack_stop_ = threading.Event()
+        self._ack_stop_ = mp.Event()
         self._ack_stop_.clear()
-        self._ack_start_ = threading.Event()
+        self._ack_start_ = mp.Event()
         self._ack_start_.clear()
         self._parent_pipe_,self._child_pipe_ = mp.Pipe()
         self._better_stop_reason_ = None

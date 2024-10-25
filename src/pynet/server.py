@@ -205,7 +205,7 @@ class ServerNetworking(object):
         else:
             connection.close()
             self.endpoint = None
-            if self._cpipe is not None and not self._cpipe.closed():
+            if self._cpipe is not None and not self._cpipe.closed:
                 try:
                     self._cpipe.close()
                 except:
