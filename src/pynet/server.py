@@ -141,7 +141,15 @@ class ServerNetworking(object):
             socks = dict(zmq_poll([(connection,zmq.POLLIN | zmq.POLLOUT)], 10))
             ticks += 1
             if time.time() - last > debug_timeout:
-                print(socks,ticks)
+                # print(socks,ticks)
+                if ticks > 200000:
+                    print("CONNECTION LOST")
+                    if not self.mode:
+                        self._cpipe.send({"state_change":0,"sid":k})
+                        with self._mcond:
+                            self._mcond.notify()
+
+                self._ping = True
                 last = time.time()
 
             ##### recv anything ready
@@ -223,7 +231,25 @@ class ServerNetworking(object):
                     payload = self._mpipe.recv()
                     # print(payload)
                     try:
-                        if "state_change" in payload:
+                        if 'clear' in payload:
+                            if 'error' in payload:
+                                print(payload['error'])
+                            if payload['clear'] in self.reply_map:
+                                if payload['clear'] is True:
+                                    for d_q in self.reply_map.values():
+                                        d_q.clear()
+                                else:
+                                    d_q = self.reply_map[payload['clear']]
+                                    if "msg" in payload:
+                                        if payload["msg"] in d_q:
+                                            clear_idx = d_q.index(msg)
+                                            del d_q[clear_idx]
+                                        else:
+                                            print("msg not found in clear request")
+                                    else:
+                                        d_q.clear()
+                            continue
+                        if 'state_change' in payload:
                             self.state_map[payload['sid']] = payload['state_change']
                             continue
                         if 'new_sid' in payload:
