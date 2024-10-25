@@ -21,6 +21,13 @@ class BetterProcess(mp.Process):
         self._better_stop_reason_ = None
         self._child_exception_ = None
         self._child_pid_ = None
+        target = kwargs['target']
+        if callable(target) and hasattr(target,'__qualname__'):
+            self._tgt_name = target.__qualname__
+        elif callable(target) and hasattr(target,'__name__'):
+            self._tgt_name = target.__name__
+        else:
+            self._tgt_name = "?"
 
     def __str__(self):
         state = ((int(self._ack_start_.is_set()) << 0)
@@ -36,7 +43,7 @@ class BetterProcess(mp.Process):
             state = 'Stopping'
         elif state in [6,7]:
             state = 'Stopped'
-        out = f"<BetterProcess: {state}, name: {self._name}, target: {self._target}>"
+        out = f"<BetterProcess: {state}, name: {self._name}, target: {self._tgt_name}>"
         return out
     
     def __repr__(self):
