@@ -140,7 +140,12 @@ class ClientNetworking(object):
                         if 'send' in incoming:
                             msg = incoming['send']
                             priority = 0
-                        self._reply(sid,msg,priority)                        
+                        self._reply(sid,msg,priority)
+                    if 'debug' in incoming:
+                        print("state:",self.state_map)
+                        print("task:",self.task_map)
+                        print("reply:",self.reply_map)
+
 
             if self._ping:
                 for k,d_q in self.reply_map.items():
@@ -157,26 +162,21 @@ class ClientNetworking(object):
                 self._ping = False
             
             socks = dict(zmq_poll([(connection,zmq.POLLIN | zmq.POLLOUT)], 10))
-            ticks += 1
+            ticks += (1 if len(self.state_map) else 0)
             if time.time() - last > debug_timeout:
                 # print(socks,ticks)
                 if ticks > 200000:
                     print("CONNECTION LOST")
                     if not self.mode:
-                        self._cpipe.send({"state_change":0,"sid":k})
-                        with self._mcond:
-                            self._mcond.notify()
+                        for k in self.state_map.keys():
+                            self._cpipe.send({"state_change":0,"sid":k})
+                            with self._mcond:
+                                self._mcond.notify()
 
                 self._ping = True
                 last = time.time()
                 continue
 
-            ##### recv anything ready
-            payload_set = list()
-            if connection in socks and socks[connection] & zmq.POLLIN:
-                last = time.time()
-                ticks = 0
-                payload_set = connection.recv_all()
             ##### send anything ready
             if connection in socks and socks[connection] & zmq.POLLOUT:
                 for sid,d_q in self.reply_map.items():
@@ -187,7 +187,15 @@ class ClientNetworking(object):
                             payload.extend(msg)
                         else:
                             payload.append(msg)
+                        # print("SENDING:",payload)
                         connection.send(payload)
+            ##### recv anything ready
+            payload_set = list()
+            if connection in socks and socks[connection] & zmq.POLLIN:
+                last = time.time()
+                ticks = 0
+                payload_set = connection.recv_all()
+                # print("RECV:",payload_set)
             for payload in payload_set:
                 if len(payload) > 2:
                     if payload[1] == b'':
@@ -200,15 +208,16 @@ class ClientNetworking(object):
                             self._add_new_sid(sid)
                         if len(msg) == 1 and msg[0]==PING:
                             self.reply(sid,PONG,1)
-                            print("____pinged____")
+                            # print("____pinged____")
                         elif len(msg) == 1 and msg[0]==PONG:
                             self.state_map[sid] = 1
                             if not self.mode:
                                 self._cpipe.send({"state_change":1,"sid":sid})
                                 with self._mcond:
                                     self._mcond.notify()
-                            print("____ponged____")
+                            # print("____ponged____")
                         else:
+                            # print("PORTATO")
                             if not self.mode:
                                 self._cpipe.send({'task':msg,'sid':sid})
                                 with self._mcond:
@@ -244,11 +253,11 @@ class ClientNetworking(object):
         if self.mode:
             print("only works in process mode")
             return
-        while not self._lthread.check_for_stop():
+        while self._lthread is not None and not self._lthread.check_for_stop():
             with self._mcond:
-                if self._mcond.wait(0.1):
+                if self._mcond.wait(0.1) or (self._mpipe is not None and self._mpipe.poll(0)):
                     payload = self._mpipe.recv()
-                    # print(payload)
+                    # print("from listener:",payload)
                     try:
                         if 'clear' in payload:
                             if 'error' in payload:
@@ -282,6 +291,7 @@ class ClientNetworking(object):
                             else:
                                 self.task_map[sid].append(msg)
                     except:
+                        self._lthread.stop(f"_monitor_pipe_err:\n{traceback.format_exc()}")
                         import traceback
                         traceback.print_exc()
                         print("failed:",payload)

@@ -123,6 +123,10 @@ class ServerNetworking(object):
                             msg = incoming['send']
                             priority = 0
                         self._reply(sid,msg,priority)
+                    if 'debug' in incoming:
+                        print("state:",self.state_map)
+                        print("task:",self.task_map)
+                        print("reply:",self.reply_map)
 
             if self._ping:
                 for k,d_q in self.reply_map.items():
@@ -153,12 +157,6 @@ class ServerNetworking(object):
                 self._ping = True
                 last = time.time()
 
-            ##### recv anything ready
-            payload_set = list()
-            if connection in socks and socks[connection] & zmq.POLLIN:
-                last = time.time()
-                ticks = 0
-                payload_set = connection.recv_all()
             ##### send anything ready
             if connection in socks and socks[connection] & zmq.POLLOUT:
                 for sid,d_q in self.reply_map.items():
@@ -170,6 +168,13 @@ class ServerNetworking(object):
                         else:
                             payload.append(msg)
                         connection.send(payload)
+            ##### recv anything ready
+            payload_set = list()
+            if connection in socks and socks[connection] & zmq.POLLIN:
+                last = time.time()
+                ticks = 0
+                payload_set = connection.recv_all()
+                # print("RECV:",payload_set)
             for payload in payload_set:
                 if len(payload) > 2:
                     if payload[1] == b'':
@@ -182,14 +187,14 @@ class ServerNetworking(object):
                             self._add_new_sid(sid)
                         if len(msg) == 1 and msg[0]==PING:
                             self.reply(sid,PONG,1)
-                            print("____pinged____")
+                            # print("____pinged____")
                         elif len(msg) == 1 and msg[0]==PONG:
                             self.state_map[sid] = 1
                             if not self.mode:
                                 self._cpipe.send({"state_change":1,"sid":sid})
                                 with self._mcond:
                                     self._mcond.notify()
-                            print("____ponged____")
+                            # print("____ponged____")
                         else:
                             if not self.mode:
                                 self._cpipe.send({'task':msg,'sid':sid})
@@ -226,9 +231,9 @@ class ServerNetworking(object):
         if self.mode:
             print("only works in process mode")
             return
-        while not self._lthread.check_for_stop():
+        while self._lthread is not None and not self._lthread.check_for_stop():
             with self._mcond:
-                if self._mcond.wait(0.1):
+                if self._mcond.wait(0.1) or (self._mpipe is not None and self._mpipe.poll(0)):
                     payload = self._mpipe.recv()
                     # print(payload)
                     try:
